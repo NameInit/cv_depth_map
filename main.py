@@ -1,137 +1,129 @@
+import depthai as dai
 import cv2
-from config import CameraConfig, ModelConfig, DisplayConfig
-from device_manager import OAKCameraManager
-from models import DetectionModel, DepthModel
-from visualizer import FrameVisualizer
+import numpy as np
+from stereo_sgbm import calc_depth_map
 from fps_counter import FPSCounter
+from ultralytics import YOLO
 
-class VisionSystem:
-    def __init__(self):
-        self.camera_config = CameraConfig()
-        self.model_config = ModelConfig()
-        self.display_config = DisplayConfig()
-        
-        self.camera = None
-        self.detector = None
-        self.depth_model = None
-        self.visualizer = None
-        self.fps_counter = None
-        
-        self.ir_brightness = self.camera_config.ir_brightness_default
-        self.running = False
-        
-    def initialize(self):
-        """Инициализация всех компонентов"""
-        self.camera = OAKCameraManager(self.camera_config)
-        self.camera.create_pipeline()
-        self.camera.start()
-        self.camera.set_ir_brightness(self.ir_brightness)
-        
-        self.detector = DetectionModel(
-            self.model_config.detect_path,
-            self.model_config.detect_name
-        )
-        
-        self.depth_model = DepthModel(
-            self.model_config.depth_encoder,
-            self.model_config.depth_features,
-            self.model_config.depth_out_channels,
-            self.model_config.depth_path,
-            self.model_config.depth_name
-        )
-        
-        self.visualizer = FrameVisualizer(self.display_config)
-        self.fps_counter = FPSCounter()
-        
-        print(f"Начальная яркость: {self.ir_brightness}")
-        
-    def process_frame(self, rgb_frame: cv2.Mat, depth_frame: cv2.Mat):
-        """Обработка одного кадра"""
-        depth_anything = self.depth_model.infer(rgb_frame)
-        
-        detections = self.detector.detect(rgb_frame)
-        
-        rgb_vis = self.visualizer.draw_detections(
-            rgb_frame, detections, depth_frame
-        )
-        
-        depth_vis = self.visualizer.visualize_depth_stereo(depth_frame)
-        depth_anything_vis = self.visualizer.visualize_depth_anything(
-            depth_anything
-        )
-        
-        target_size = (800, 400)
-        frames = {
-            'depth': cv2.resize(depth_vis, target_size),
-            'rgb': cv2.resize(rgb_vis, target_size),
-            'depth_anything': cv2.resize(depth_anything_vis, target_size),
-            'main': cv2.resize(rgb_frame, target_size)
-        }
-        
-        return frames
-        
-    def handle_input(self, key: int) -> bool:
-        """Обработка пользовательского ввода"""
-        if key == ord('q'):
-            return False
-        elif key == ord('w'):
-            self.ir_brightness = self.camera.set_ir_brightness(
-                self.ir_brightness - 200
-            )
-            print(f"Яркость: {self.ir_brightness}")
-        elif key == ord('e'):
-            self.ir_brightness = self.camera.set_ir_brightness(
-                self.ir_brightness + 200
-            )
-            print(f"Яркость: {self.ir_brightness}")
-        return True
-    
-    def add_fps_to_frame(self, frame: cv2.Mat):
-        """Добавление FPS на кадр"""
-        fps_text = self.fps_counter.get_fps_text()
-        cv2.putText(
-            frame,
-            fps_text,
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
-            (0, 255, 0),
-            2
-        )
-        return frame
-    
-    def run(self):
-        """Основной цикл программы"""
-        self.running = True
-        
-        try:
-            while self.running:
-                depth_frame, rgb_frame = self.camera.get_frames()
-                
-                frames = self.process_frame(rgb_frame, depth_frame)
-                
-                self.fps_counter.update()
-                frames['main'] = self.add_fps_to_frame(frames['main'])
-                
-                self.visualizer.show_frames(frames)
-                
-                key = cv2.waitKey(1) & 0xFF
-                self.running = self.handle_input(key)
-                
-        finally:
-            self.cleanup()
-    
-    def cleanup(self):
-        """Очистка ресурсов"""
-        print("Завершение работы...")
-        cv2.destroyAllWindows()
-        if self.camera:
-            self.camera.stop()
+model_detect_name = "yolov10n.pt"
+model_detect_path = ".models/model_pt/"
 
-def main():
-    system = VisionSystem()
-    system.initialize()
-    system.run()
+def run_pipeline():
+    
+    model_detect = YOLO(model_detect_path + model_detect_name)
+    pipeline = dai.Pipeline()
+    
+    left_cam = pipeline.create(dai.node.MonoCamera)
+    right_cam = pipeline.create(dai.node.MonoCamera)
+    middle_cam = pipeline.create(dai.node.ColorCamera)
+    
+    left_cam.setBoardSocket(dai.CameraBoardSocket.LEFT)
+    right_cam.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+    middle_cam.setBoardSocket(dai.CameraBoardSocket.CENTER)
+    
+    left_cam.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+    right_cam.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+    middle_cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
+    middle_cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.RGB)
+
+    stereo = pipeline.create(dai.node.StereoDepth)
+    stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_ACCURACY)
+    stereo.setLeftRightCheck(True)
+    
+    left_cam.out.link(stereo.left)
+    right_cam.out.link(stereo.right)
+    
+    xout_left = pipeline.create(dai.node.XLinkOut)
+    xout_left.setStreamName("left")
+    xout_right = pipeline.create(dai.node.XLinkOut)
+    xout_right.setStreamName("right")
+    xout_middle = pipeline.create(dai.node.XLinkOut)
+    xout_middle.setStreamName("middle")
+    
+    stereo.rectifiedLeft.link(xout_left.input)
+    stereo.rectifiedRight.link(xout_right.input)
+    
+    middle_cam.video.link(xout_middle.input)
+    
+    with dai.Device(pipeline) as device:
+        device.setIrLaserDotProjectorBrightness(800)
+        
+        left_queue = device.getOutputQueue("left", 1, False)
+        right_queue = device.getOutputQueue("right", 1, False)
+        middle_queue = device.getOutputQueue("middle", 1, False)
+
+        fps = FPSCounter()
+
+        while True:
+            left_frame = left_queue.get().getCvFrame()
+            right_frame = right_queue.get().getCvFrame()
+            middle_frame = middle_queue.get().getCvFrame()
+            
+            custom_disp, distance_m, _ = calc_depth_map(left_frame, right_frame)
+            
+            results = model_detect(middle_frame, verbose=False)
+            
+            h_rgb, w_rgb = middle_frame.shape[:2]  # (1080, 1920)
+            h_depth, w_depth = distance_m.shape[:2]  # (400, 640)
+            
+            for r in results:
+                for box in r.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    conf = float(box.conf[0])
+                    cls_id = int(box.cls[0])
+                    cls_name = model_detect.names[cls_id]
+
+                    cx_rgb = (x1 + x2) // 2
+                    cy_rgb = (y1 + y2) // 2
+
+                    cx_depth = int(cx_rgb * (w_depth / w_rgb))
+                    cy_depth = int(cy_rgb * (h_depth / h_rgb))
+
+                    dist_m = 0.0
+                    
+                    if 0 <= cx_depth < w_depth and 0 <= cy_depth < h_depth:
+                        x_min = max(0, cx_depth - 5)
+                        x_max = min(w_depth, cx_depth + 5)
+                        y_min = max(0, cy_depth - 5)
+                        y_max = min(h_depth, cy_depth + 5)
+                        
+                        roi = distance_m[y_min:y_max, x_min:x_max]
+                        
+                        valid_distances = roi[(roi > 0.5) & (roi < 11.9)]
+                        
+                        if len(valid_distances) > 0:
+                            dist_m = np.median(valid_distances)
+
+                    color = (0, 0, 255)
+                    cv2.rectangle(middle_frame, (x1, y1), (x2, y2), color, 4)
+                    
+                    if dist_m > 0:
+                        label = f"{cls_name} {dist_m:.2f}m"
+                    else:
+                        label = f"{cls_name} N/A"
+                        
+                    cv2.putText(middle_frame, label, (x1, max(y1 - 10, 30)), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 2, color, 4)
+
+            left_small = cv2.resize(left_frame, (320, 200))
+            right_small = cv2.resize(right_frame, (320, 200))
+            middle_small = cv2.resize(middle_frame, (320, 200))
+            custom_disp_small = cv2.resize(custom_disp, (320, 200))
+                
+            fps.update()
+            
+            cv2.putText(middle_small, fps.get_fps_text(), (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            
+            cv2.imshow("OpenCV SGDB", custom_disp_small)
+            cv2.imshow("Left Rectified", left_small)
+            cv2.imshow("Right Rectified", right_small)
+            cv2.imshow("RGB", middle_small)
+            
+            if cv2.waitKey(1) == ord('q'):
+                break
+    
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main()
+    run_pipeline()

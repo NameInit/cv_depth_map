@@ -3,33 +3,25 @@ from camera_manager import CameraManager
 from stereo_sgbm import StereoSGBM
 from detector import ObjectDetector
 from fps_counter import FPSCounter
+from config import Config
 import utils
-import numpy as np
 
 def main():
     cam = CameraManager().start()
-    real_focal, real_baseline = cam.get_calibration()
 
-    depth_engine = StereoSGBM(scale=0.6, use_wls=True)
-    
+    stereo_sgbm = StereoSGBM(Config.SGDM_SCALE, Config.SGDM_WLS)
+
     detector = ObjectDetector()
-    
+
     fps = FPSCounter()
-    
-    width_depth = 640
-    height_depth = 400
-    cx = width_depth / 2
-    cy = height_depth / 2
 
     try:
         while True:
             left, right, rgb = cam.get_frames()
 
-            if left is None: continue
+            depth_vis, distance_map, _ = stereo_sgbm.compute(left, right)
 
-            depth_vis, distance_map, _ = depth_engine.compute(left, right, focal_length=real_focal, baseline_cm=real_baseline*1000)
-            
-            detections = detector.detect(rgb)
+            detections = detector.detect(rgb, Config.MODEL_CONF)
             
             utils.draw_results(rgb, detections, distance_map)
             

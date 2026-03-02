@@ -75,10 +75,10 @@ class StereoSGBM:
             disparity = disparity * (1.0 / self.scale)
 
         disparity[disparity <= 0.5] = 0.5
-        
+
         baseline_m = baseline_cm / 100.0
         distance_m = (focal_length * baseline_m) / disparity
-        
+
         distance_m = np.clip(distance_m, 0, Config.MAX_DIST_M)
         
         norm = 255 - np.uint8((distance_m / Config.MAX_DIST_M) * 255)

@@ -9,9 +9,9 @@ class CameraManager:
         self.q_left = None
         self.q_right = None
         self.q_middle = None
-        
-        self.baseline_cm = 7.5
-        self.focal_length = 441.25
+
+        self.baseline_cm = 7.51
+        self.focal_length = 397.6625061035156
 
     def _create_pipeline(self):
         pipeline = dai.Pipeline()

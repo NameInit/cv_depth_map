@@ -1,5 +1,5 @@
 from ultralytics import YOLO
-from config import Config
+from .config import Config
 
 class ObjectDetector:
     def __init__(self):

@@ -1,6 +1,6 @@
 import depthai as dai
 import numpy as np
-from config import Config
+from .config import Config
 
 class CameraManager:
     def __init__(self):

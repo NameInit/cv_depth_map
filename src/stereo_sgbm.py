@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from config import Config
+from .config import Config
 
 class StereoSGBM:
     def __init__(self, scale=1.0, use_wls=True):

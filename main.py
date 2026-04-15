@@ -1,10 +1,10 @@
 import cv2
-from camera_manager import CameraManager
-from stereo_sgbm import StereoSGBM
-from detector import ObjectDetector
-from fps_counter import FPSCounter
-from config import Config
-import utils
+from src.camera_manager import CameraManager
+from src.stereo_sgbm import StereoSGBM
+from src.detector import ObjectDetector
+from src.fps_counter import FPSCounter
+from src.config import Config
+from src import utils
 
 def main():
     cam = CameraManager().start()

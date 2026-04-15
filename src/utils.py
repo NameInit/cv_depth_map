@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from config import Config
+from .config import Config
 
 def get_distance_percentile(x1, y1, x2, y2, frame, distance_map, percentile=20):
     h, w = distance_map.shape[:2]
